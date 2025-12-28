@@ -269,18 +269,9 @@ function CustomerPortal() {
               const result = await uploadRes.json()
               dataId = result.data_id
             } else if (selectedKernel?.input_type === 'text_items') {
-              // Upload text items for embedding generation
+              // For text items, we'll pass data inline with job creation to handle multi-instance deployments
               if (!textItems.trim()) throw new Error('No text items provided')
-              const blob = new Blob([textItems], { type: 'text/plain' })
-              const formData = new FormData()
-              formData.append('file', blob, 'text_items.txt')
-              const uploadRes = await fetch(`${API_URL}/upload`, {
-                method: 'POST',
-                body: formData
-              })
-              if (!uploadRes.ok) throw new Error('Text items upload failed')
-              const result = await uploadRes.json()
-              dataId = result.data_id
+              dataId = `text-items-${Date.now()}`
             } else if (selectedKernel?.input_type === 'image_collection') {
               // Upload image collection for embedding generation
               if (imageCollection.length === 0) throw new Error('No images provided')
@@ -347,12 +338,19 @@ function CustomerPortal() {
             }
       
       // Create job using generic endpoint
-      const jobRes = await fetch(
-        `${API_URL}/jobs/create?data_id=${dataId}&kernel_type=${kernelType}&customer_id=demo-customer&params=${encodeURIComponent(JSON.stringify(params))}`,
-        { method: 'POST' }
-      )
+      // For text_items, pass data inline to handle multi-instance deployments
+      let jobUrl = `${API_URL}/jobs/create?data_id=${dataId}&kernel_type=${kernelType}&customer_id=demo-customer&params=${encodeURIComponent(JSON.stringify(params))}`
+      if (selectedKernel?.input_type === 'text_items' && textItems) {
+        jobUrl += `&inline_data=${encodeURIComponent(textItems)}`
+      }
+      const jobRes = await fetch(jobUrl, { method: 'POST' })
       
       if (!jobRes.ok) throw new Error('Job creation failed')
+      
+      // Use the returned job data directly to handle multi-instance deployments
+      // (fetching jobs might go to a different instance that doesn't have this job)
+      const createdJob = await jobRes.json()
+      setJobs(prevJobs => [createdJob, ...prevJobs])
       
             // Reset form
             setSelectedFile(null)
@@ -366,8 +364,6 @@ function CustomerPortal() {
             if (fileInputRef.current) fileInputRef.current.value = ''
             if (imageCollectionRef.current) imageCollectionRef.current.value = ''
             if (videoInputRef.current) videoInputRef.current.value = ''
-      
-      fetchJobs()
     } catch (err) {
       console.error('Failed to submit job:', err)
       alert(`Failed to submit job: ${err}`)
