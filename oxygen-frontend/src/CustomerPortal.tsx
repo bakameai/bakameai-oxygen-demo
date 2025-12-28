@@ -96,8 +96,10 @@ function CustomerPortal() {
   const [framesPerBatch, setFramesPerBatch] = useState('10')
   const [itemsPerBatch, setItemsPerBatch] = useState('10')
   const [imagesPerBatch, setImagesPerBatch] = useState('5')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<Array<{item: string, score: number}>>([])
+  // Search functionality - to be implemented in future
+  const [_searchQuery, _setSearchQuery] = useState('')
+  const [_searchResults, _setSearchResults] = useState<Array<{item: string, score: number}>>([])
+  void _searchQuery; void _setSearchQuery; void _searchResults; void _setSearchResults;
   const [isUploading, setIsUploading] = useState(false)
   const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)

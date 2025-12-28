@@ -793,7 +793,7 @@ function WorkerPortal() {
       // Get frame range from task params
       const startFrame = task.shard_params?.start_frame as number ?? 0
       const endFrame = task.shard_params?.end_frame as number ?? 10
-      const totalFrames = task.shard_params?.total_frames as number ?? 100
+      // totalFrames available in task.shard_params if needed for progress calculation
       
       setProcessingStatus(`Analyzing frames ${startFrame}-${endFrame}...`)
       
