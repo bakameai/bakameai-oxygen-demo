@@ -10,7 +10,7 @@ import { Upload, Image, CheckCircle, Clock, Loader2, ExternalLink, FileText, Has
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-type KernelType = 'image_blur' | 'image_edge' | 'image_grayscale' | 'file_hash' | 'text_wordcount' | 'matrix_multiply' | 'image_classify' | 'model_finetune'
+type KernelType = 'image_blur' | 'image_edge' | 'image_grayscale' | 'file_hash' | 'text_wordcount' | 'matrix_multiply' | 'image_classify' | 'model_finetune' | 'text_embed' | 'image_embed' | 'video_analyze'
 
 interface Kernel {
   type: KernelType
@@ -62,6 +62,9 @@ interface Task {
 }
 
 const KERNELS: Kernel[] = [
+  { type: 'text_embed', name: 'Text Embeddings (Semantic Search)', description: 'Generate embeddings for text items - enables semantic search', input_type: 'text_items' },
+  { type: 'image_embed', name: 'Image Embeddings (Visual Search)', description: 'Generate embeddings for images - enables visual similarity search', input_type: 'image_collection' },
+  { type: 'video_analyze', name: 'Video Analysis', description: 'Detect objects/people in video frames - produces timestamps and highlights', input_type: 'video' },
   { type: 'model_finetune', name: 'AI Model Fine-Tuning', description: 'Distributed fine-tuning of MobileNet on custom images (real training)', input_type: 'training' },
   { type: 'image_classify', name: 'AI Image Classification', description: 'Classify images using MobileNet AI model (real inference)', input_type: 'image' },
   { type: 'image_blur', name: 'Gaussian Blur', description: 'Apply Gaussian blur filter to images', input_type: 'image' },
@@ -76,18 +79,30 @@ function CustomerPortal() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [kernelType, setKernelType] = useState<KernelType>('image_blur')
+  const [kernelType, setKernelType] = useState<KernelType>('text_embed')
   const [gridSize, setGridSize] = useState('4')
-    const [matrixSize, setMatrixSize] = useState('64')
-    const [blockSize, setBlockSize] = useState('16')
-    const [textContent, setTextContent] = useState('')
-    const [trainingImages, setTrainingImages] = useState<File[]>([])
-    const [trainingLabels, setTrainingLabels] = useState<string[]>([])
-    const [numRounds, setNumRounds] = useState('5')
-    const [epochsPerRound, setEpochsPerRound] = useState('1')
+  const [matrixSize, setMatrixSize] = useState('64')
+  const [blockSize, setBlockSize] = useState('16')
+  const [textContent, setTextContent] = useState('')
+  const [trainingImages, setTrainingImages] = useState<File[]>([])
+  const [trainingLabels, setTrainingLabels] = useState<string[]>([])
+  const [numRounds, setNumRounds] = useState('5')
+  const [epochsPerRound, setEpochsPerRound] = useState('1')
+  // New state for embeddings and video analysis
+  const [textItems, setTextItems] = useState('')
+  const [imageCollection, setImageCollection] = useState<File[]>([])
+  const [videoFile, setVideoFile] = useState<File | null>(null)
+  const [numFrames, setNumFrames] = useState('100')
+  const [framesPerBatch, setFramesPerBatch] = useState('10')
+  const [itemsPerBatch, setItemsPerBatch] = useState('10')
+  const [imagesPerBatch, setImagesPerBatch] = useState('5')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<Array<{item: string, score: number}>>([])
   const [isUploading, setIsUploading] = useState(false)
   const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const imageCollectionRef = useRef<HTMLInputElement>(null)
+  const videoInputRef = useRef<HTMLInputElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
   
   const selectedKernel = KERNELS.find(k => k.type === kernelType)
@@ -246,6 +261,53 @@ function CustomerPortal() {
               if (!uploadRes.ok) throw new Error('Training data upload failed')
               const result = await uploadRes.json()
               dataId = result.data_id
+            } else if (selectedKernel?.input_type === 'text_items') {
+              // Upload text items for embedding generation
+              if (!textItems.trim()) throw new Error('No text items provided')
+              const blob = new Blob([textItems], { type: 'text/plain' })
+              const formData = new FormData()
+              formData.append('file', blob, 'text_items.txt')
+              const uploadRes = await fetch(`${API_URL}/upload`, {
+                method: 'POST',
+                body: formData
+              })
+              if (!uploadRes.ok) throw new Error('Text items upload failed')
+              const result = await uploadRes.json()
+              dataId = result.data_id
+            } else if (selectedKernel?.input_type === 'image_collection') {
+              // Upload image collection for embedding generation
+              if (imageCollection.length === 0) throw new Error('No images provided')
+              const imageData: { images: string[] } = { images: [] }
+              for (const img of imageCollection) {
+                const base64 = await new Promise<string>((resolve) => {
+                  const reader = new FileReader()
+                  reader.onload = () => resolve(reader.result as string)
+                  reader.readAsDataURL(img)
+                })
+                imageData.images.push(base64)
+              }
+              const blob = new Blob([JSON.stringify(imageData)], { type: 'application/json' })
+              const formData = new FormData()
+              formData.append('file', blob, 'image_collection.json')
+              const uploadRes = await fetch(`${API_URL}/upload`, {
+                method: 'POST',
+                body: formData
+              })
+              if (!uploadRes.ok) throw new Error('Image collection upload failed')
+              const result = await uploadRes.json()
+              dataId = result.data_id
+            } else if (selectedKernel?.input_type === 'video') {
+              // Upload video file for analysis
+              if (!videoFile) throw new Error('No video file provided')
+              const formData = new FormData()
+              formData.append('file', videoFile)
+              const uploadRes = await fetch(`${API_URL}/upload`, {
+                method: 'POST',
+                body: formData
+              })
+              if (!uploadRes.ok) throw new Error('Video upload failed')
+              const result = await uploadRes.json()
+              dataId = result.data_id
             }
       
             if (!dataId && selectedKernel?.input_type !== 'matrix') {
@@ -254,7 +316,13 @@ function CustomerPortal() {
       
             // Build params based on kernel type
             let params: Record<string, unknown> = {}
-            if (kernelType.startsWith('image_')) {
+            if (kernelType === 'text_embed') {
+              params = { items_per_batch: parseInt(itemsPerBatch) }
+            } else if (kernelType === 'image_embed') {
+              params = { images_per_batch: parseInt(imagesPerBatch) }
+            } else if (kernelType === 'video_analyze') {
+              params = { num_frames: parseInt(numFrames), frames_per_batch: parseInt(framesPerBatch) }
+            } else if (kernelType.startsWith('image_')) {
               params = { grid_size: parseInt(gridSize) }
             } else if (kernelType === 'file_hash') {
               params = { chunk_size: 65536 }
@@ -285,7 +353,12 @@ function CustomerPortal() {
             setTextContent('')
             setTrainingImages([])
             setTrainingLabels([])
+            setTextItems('')
+            setImageCollection([])
+            setVideoFile(null)
             if (fileInputRef.current) fileInputRef.current.value = ''
+            if (imageCollectionRef.current) imageCollectionRef.current.value = ''
+            if (videoInputRef.current) videoInputRef.current.value = ''
       
       fetchJobs()
     } catch (err) {
@@ -318,6 +391,9 @@ function CustomerPortal() {
 
     const getKernelIcon = (type: KernelType) => {
       if (type === 'model_finetune') return <Loader2 className="h-4 w-4" />
+      if (type === 'text_embed') return <FileText className="h-4 w-4" />
+      if (type === 'image_embed') return <Image className="h-4 w-4" />
+      if (type === 'video_analyze') return <File className="h-4 w-4" />
       if (type.startsWith('image_')) return <Image className="h-4 w-4" />
       if (type === 'file_hash') return <Hash className="h-4 w-4" />
       if (type === 'text_wordcount') return <FileText className="h-4 w-4" />
@@ -330,6 +406,13 @@ function CustomerPortal() {
         return parseInt(numRounds)  // One fragment per training round
       } else if (kernelType === 'image_classify') {
         return 1  // One classification per image
+      } else if (kernelType === 'text_embed') {
+        const lines = textItems.split('\n').filter(l => l.trim()).length
+        return Math.max(1, Math.ceil(lines / parseInt(itemsPerBatch)))
+      } else if (kernelType === 'image_embed') {
+        return Math.max(1, Math.ceil(imageCollection.length / parseInt(imagesPerBatch)))
+      } else if (kernelType === 'video_analyze') {
+        return Math.max(1, Math.ceil(parseInt(numFrames) / parseInt(framesPerBatch)))
       } else if (kernelType.startsWith('image_')) {
         return parseInt(gridSize) * parseInt(gridSize)
       } else if (kernelType === 'matrix_multiply') {
@@ -342,6 +425,15 @@ function CustomerPortal() {
     const canSubmit = () => {
       if (kernelType === 'model_finetune') {
         return trainingImages.length >= 2 && trainingLabels.every(l => l.length > 0)
+      }
+      if (kernelType === 'text_embed') {
+        return textItems.trim().length > 0
+      }
+      if (kernelType === 'image_embed') {
+        return imageCollection.length > 0
+      }
+      if (kernelType === 'video_analyze') {
+        return videoFile !== null
       }
       if (kernelType.startsWith('image_') || kernelType === 'file_hash') {
         return selectedFile !== null
@@ -651,6 +743,194 @@ function CustomerPortal() {
                                 </div>
                               </div>
                             )}
+
+              {/* Text Embeddings Input */}
+              {selectedKernel?.input_type === 'text_items' && (
+                <div className="space-y-4">
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                    <h4 className="font-medium text-blue-800 mb-2">Semantic Search Embeddings</h4>
+                    <p className="text-sm text-blue-600">
+                      Enter text items (one per line) to generate embeddings. Workers will process batches 
+                      in parallel and create a searchable index for semantic similarity search.
+                    </p>
+                  </div>
+                  <Textarea
+                    placeholder="Enter text items, one per line. Example:
+Red running shoes for marathon training
+Blue casual sneakers for everyday wear
+Black leather boots for winter
+White tennis shoes for sports
+..."
+                    value={textItems}
+                    onChange={(e) => setTextItems(e.target.value)}
+                    className="min-h-48 font-mono text-sm"
+                  />
+                  <div className="flex items-center justify-between text-sm text-gray-500">
+                    <span>{textItems.split('\n').filter(l => l.trim()).length} items</span>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs">Items per batch:</Label>
+                      <Select value={itemsPerBatch} onValueChange={setItemsPerBatch}>
+                        <SelectTrigger className="w-20 h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="5">5</SelectItem>
+                          <SelectItem value="10">10</SelectItem>
+                          <SelectItem value="20">20</SelectItem>
+                          <SelectItem value="50">50</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Image Collection Input for Embeddings */}
+              {selectedKernel?.input_type === 'image_collection' && (
+                <div className="space-y-4">
+                  <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                    <h4 className="font-medium text-green-800 mb-2">Visual Search Embeddings</h4>
+                    <p className="text-sm text-green-600">
+                      Upload images to generate visual embeddings. Workers will process batches in parallel 
+                      and create a searchable index for visual similarity search ("find similar images").
+                    </p>
+                  </div>
+                  <div 
+                    className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center cursor-pointer hover:border-green-500 transition-colors"
+                    onClick={() => imageCollectionRef.current?.click()}
+                  >
+                    <input
+                      ref={imageCollectionRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(e) => {
+                        const files = e.target.files
+                        if (files) {
+                          setImageCollection(prev => [...prev, ...Array.from(files)])
+                        }
+                      }}
+                      className="hidden"
+                    />
+                    <Upload className="h-8 w-8 mx-auto text-gray-400 mb-2" />
+                    <p className="text-sm text-gray-600">Click to add images for embedding</p>
+                    <p className="text-xs text-gray-400">Select multiple images at once</p>
+                  </div>
+                  {imageCollection.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-gray-600">{imageCollection.length} images selected</span>
+                        <button 
+                          onClick={() => setImageCollection([])}
+                          className="text-xs text-red-500 hover:text-red-700"
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-6 gap-2 max-h-32 overflow-y-auto">
+                        {imageCollection.map((img, idx) => (
+                          <div key={idx} className="relative group">
+                            <img 
+                              src={URL.createObjectURL(img)} 
+                              alt={`Image ${idx}`} 
+                              className="w-full h-12 object-cover rounded"
+                            />
+                            <button
+                              onClick={() => setImageCollection(prev => prev.filter((_, i) => i !== idx))}
+                              className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              x
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <Label className="text-xs">Images per batch:</Label>
+                        <Select value={imagesPerBatch} onValueChange={setImagesPerBatch}>
+                          <SelectTrigger className="w-20 h-8">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="3">3</SelectItem>
+                            <SelectItem value="5">5</SelectItem>
+                            <SelectItem value="10">10</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Video Analysis Input */}
+              {selectedKernel?.input_type === 'video' && (
+                <div className="space-y-4">
+                  <div className="bg-orange-50 p-4 rounded-lg border border-orange-200">
+                    <h4 className="font-medium text-orange-800 mb-2">Video Object Detection</h4>
+                    <p className="text-sm text-orange-600">
+                      Upload a video to detect objects and people in frames. Workers will analyze frame batches 
+                      in parallel and produce timestamps of detected items with confidence scores.
+                    </p>
+                  </div>
+                  <div 
+                    className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-orange-500 transition-colors"
+                    onClick={() => videoInputRef.current?.click()}
+                  >
+                    <input
+                      ref={videoInputRef}
+                      type="file"
+                      accept="video/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) setVideoFile(file)
+                      }}
+                      className="hidden"
+                    />
+                    {videoFile ? (
+                      <div className="space-y-2">
+                        <File className="h-12 w-12 mx-auto text-orange-500" />
+                        <p className="text-sm text-gray-600">{videoFile.name}</p>
+                        <p className="text-xs text-gray-400">{(videoFile.size / (1024 * 1024)).toFixed(1)} MB</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <File className="h-12 w-12 mx-auto text-gray-400" />
+                        <p className="text-gray-600">Click to upload a video</p>
+                        <p className="text-xs text-gray-400">MP4, MOV, AVI up to 100MB</p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label>Frames to Analyze</Label>
+                      <Select value={numFrames} onValueChange={setNumFrames}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="50">50 frames</SelectItem>
+                          <SelectItem value="100">100 frames</SelectItem>
+                          <SelectItem value="200">200 frames</SelectItem>
+                          <SelectItem value="500">500 frames</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Frames per Batch</Label>
+                      <Select value={framesPerBatch} onValueChange={setFramesPerBatch}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="5">5 frames</SelectItem>
+                          <SelectItem value="10">10 frames</SelectItem>
+                          <SelectItem value="20">20 frames</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              )}
 
                             <Button
                 onClick={handleSubmit} 

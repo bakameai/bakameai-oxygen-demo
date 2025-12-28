@@ -66,6 +66,9 @@ class KernelType(str, Enum):
     MATRIX_MULTIPLY = "matrix_multiply"
     IMAGE_CLASSIFY = "image_classify"
     MODEL_FINETUNE = "model_finetune"
+    TEXT_EMBED = "text_embed"
+    IMAGE_EMBED = "image_embed"
+    VIDEO_ANALYZE = "video_analyze"
 
 class PaymentStatus(str, Enum):
     ESCROWED = "escrowed"
@@ -399,6 +402,65 @@ def aggregate_job_results(job: Job, fragments: list[Fragment]) -> dict:
             "final_accuracy": final_accuracy,
             "status": "completed"
         }
+    elif job.kernel_type == KernelType.TEXT_EMBED:
+        # Aggregate text embeddings from all batches
+        all_embeddings = []
+        all_items = []
+        for f in sorted_fragments:
+            if f.verified_result:
+                embeddings = f.verified_result.get("embeddings", [])
+                items = f.verified_result.get("items", [])
+                all_embeddings.extend(embeddings)
+                all_items.extend(items)
+        return {
+            "embeddings": all_embeddings,
+            "items": all_items,
+            "total_items": len(all_items),
+            "embedding_dim": len(all_embeddings[0]) if all_embeddings else 0,
+            "status": "completed"
+        }
+    elif job.kernel_type == KernelType.IMAGE_EMBED:
+        # Aggregate image embeddings from all batches
+        all_embeddings = []
+        all_image_ids = []
+        for f in sorted_fragments:
+            if f.verified_result:
+                embeddings = f.verified_result.get("embeddings", [])
+                image_ids = f.verified_result.get("image_ids", [])
+                all_embeddings.extend(embeddings)
+                all_image_ids.extend(image_ids)
+        return {
+            "embeddings": all_embeddings,
+            "image_ids": all_image_ids,
+            "total_images": len(all_image_ids),
+            "embedding_dim": len(all_embeddings[0]) if all_embeddings else 0,
+            "status": "completed"
+        }
+    elif job.kernel_type == KernelType.VIDEO_ANALYZE:
+        # Aggregate video analysis results from all frame batches
+        all_detections = []
+        frames_with_detections = 0
+        detection_counts = {}
+        for f in sorted_fragments:
+            if f.verified_result:
+                detections = f.verified_result.get("detections", [])
+                all_detections.extend(detections)
+                for det in detections:
+                    label = det.get("label", "unknown")
+                    detection_counts[label] = detection_counts.get(label, 0) + 1
+                    if det.get("confidence", 0) > 0.5:
+                        frames_with_detections += 1
+        # Get highlight frames (frames with high-confidence detections)
+        highlights = [d for d in all_detections if d.get("confidence", 0) > 0.7]
+        highlights = sorted(highlights, key=lambda x: x.get("confidence", 0), reverse=True)[:20]
+        return {
+            "detections": all_detections,
+            "highlights": highlights,
+            "detection_counts": detection_counts,
+            "total_frames_analyzed": job.params.get("num_frames", 0),
+            "frames_with_detections": frames_with_detections,
+            "status": "completed"
+        }
     return {"status": "completed", "fragments": len(sorted_fragments)}
 
 # ============== API ENDPOINTS ==============
@@ -517,6 +579,88 @@ async def create_job(data_id: str, kernel_type: KernelType, customer_id: str = "
             })
         job_params["num_rounds"] = num_rounds
         job_params["epochs_per_round"] = epochs_per_round
+    elif kernel_type == KernelType.TEXT_EMBED:
+        # For text embeddings, split text into items (lines or JSON array)
+        # Each item gets an embedding generated
+        text = data.decode('utf-8', errors='ignore')
+        items = []
+        # Try to parse as JSON array first
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                items = [str(item) if isinstance(item, dict) else item for item in parsed]
+            else:
+                items = text.strip().split('\n')
+        except:
+            items = text.strip().split('\n')
+        items = [item.strip() for item in items if item.strip()]
+        items_per_batch = job_params.get("items_per_batch", 10)
+        num_batches = max(1, (len(items) + items_per_batch - 1) // items_per_batch)
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * items_per_batch
+            end_idx = min(start_idx + items_per_batch, len(items))
+            fragments_to_create.append({
+                "shard_id": f"batch_{batch_idx}",
+                "shard_params": {
+                    "batch_index": batch_idx,
+                    "start_index": start_idx,
+                    "end_index": end_idx,
+                    "total_items": len(items)
+                }
+            })
+        job_params["total_items"] = len(items)
+        job_params["items_per_batch"] = items_per_batch
+    elif kernel_type == KernelType.IMAGE_EMBED:
+        # For image embeddings, the data contains multiple images (JSON with base64 images)
+        # Each image gets an embedding generated
+        text = data.decode('utf-8', errors='ignore')
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                num_images = len(parsed)
+            elif isinstance(parsed, dict) and "images" in parsed:
+                num_images = len(parsed["images"])
+            else:
+                num_images = 1
+        except:
+            num_images = 1
+        images_per_batch = job_params.get("images_per_batch", 5)
+        num_batches = max(1, (num_images + images_per_batch - 1) // images_per_batch)
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * images_per_batch
+            end_idx = min(start_idx + images_per_batch, num_images)
+            fragments_to_create.append({
+                "shard_id": f"batch_{batch_idx}",
+                "shard_params": {
+                    "batch_index": batch_idx,
+                    "start_index": start_idx,
+                    "end_index": end_idx,
+                    "total_images": num_images
+                }
+            })
+        job_params["total_images"] = num_images
+        job_params["images_per_batch"] = images_per_batch
+    elif kernel_type == KernelType.VIDEO_ANALYZE:
+        # For video analysis, we process frames
+        # The data contains video metadata or frame count
+        # Each batch of frames is a fragment
+        num_frames = job_params.get("num_frames", 100)  # Total frames to analyze
+        frames_per_batch = job_params.get("frames_per_batch", 10)
+        num_batches = max(1, (num_frames + frames_per_batch - 1) // frames_per_batch)
+        for batch_idx in range(num_batches):
+            start_frame = batch_idx * frames_per_batch
+            end_frame = min(start_frame + frames_per_batch, num_frames)
+            fragments_to_create.append({
+                "shard_id": f"frames_{start_frame}_{end_frame}",
+                "shard_params": {
+                    "batch_index": batch_idx,
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    "total_frames": num_frames
+                }
+            })
+        job_params["num_frames"] = num_frames
+        job_params["frames_per_batch"] = frames_per_batch
     job.params = job_params
     job.total_fragments = len(fragments_to_create)
     add_job_lifecycle_event(job, "decomposed", {"fragment_count": len(fragments_to_create)})
