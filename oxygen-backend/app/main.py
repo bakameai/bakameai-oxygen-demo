@@ -935,9 +935,14 @@ async def websocket_client(websocket: WebSocket, client_id: str):
 
 @app.websocket("/ws/worker/{worker_id}")
 async def websocket_worker(websocket: WebSocket, worker_id: str):
+    # Auto-register worker if not found (handles multi-instance deployments)
     if worker_id not in workers_db:
-        await websocket.close(code=4004)
-        return
+        workers_db[worker_id] = Worker(
+            id=worker_id,
+            name=f"Worker-{worker_id[:8]}",
+            device_info={},
+            capabilities={"supported_kernels": ["text_embed", "image_embed", "video_analyze"]}
+        )
     await manager.connect_worker(websocket, worker_id)
     workers_db[worker_id].is_active = True
     workers_db[worker_id].last_heartbeat = time.time()
