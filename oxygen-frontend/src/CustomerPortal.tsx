@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Upload, Image, CheckCircle, Clock, Loader2, ExternalLink, FileText, Hash, Grid3X3, File } from 'lucide-react'
+import { Upload, Image, CheckCircle, Clock, Loader2, ExternalLink, FileText, Hash, Grid3X3, File, Download, Play } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -449,17 +449,74 @@ function CustomerPortal() {
       return false
     }
 
+    // Download results as JSON or CSV
+    const downloadResults = (job: Job, format: 'json' | 'csv') => {
+      if (!job.result) return
+      
+      let content: string
+      let filename: string
+      let mimeType: string
+      
+      if (format === 'json') {
+        content = JSON.stringify(job.result, null, 2)
+        filename = `oxygen-results-${job.id.slice(0, 8)}.json`
+        mimeType = 'application/json'
+      } else {
+        // Convert to CSV based on kernel type
+        if (job.kernel_type === 'text_embed' && job.result.embeddings) {
+          const embeddings = job.result.embeddings as number[][]
+          const items = job.result.items as string[]
+          const headers = ['item', ...Array(embeddings[0]?.length || 0).fill(0).map((_, i) => `dim_${i}`)]
+          const rows = items.map((item, i) => [item, ...(embeddings[i] || [])].join(','))
+          content = [headers.join(','), ...rows].join('\n')
+        } else if (job.kernel_type === 'image_embed' && job.result.embeddings) {
+          const embeddings = job.result.embeddings as number[][]
+          const imageIds = job.result.image_ids as string[]
+          const headers = ['image_id', ...Array(embeddings[0]?.length || 0).fill(0).map((_, i) => `dim_${i}`)]
+          const rows = imageIds.map((id, i) => [id, ...(embeddings[i] || [])].join(','))
+          content = [headers.join(','), ...rows].join('\n')
+        } else if (job.kernel_type === 'video_analyze' && job.result.detections) {
+          const detections = job.result.detections as Array<{frame: number, timestamp: number, label: string, confidence: number}>
+          const headers = ['frame', 'timestamp', 'label', 'confidence']
+          const rows = detections.map(d => [d.frame, d.timestamp, d.label, d.confidence].join(','))
+          content = [headers.join(','), ...rows].join('\n')
+        } else {
+          content = JSON.stringify(job.result, null, 2)
+          filename = `oxygen-results-${job.id.slice(0, 8)}.json`
+          mimeType = 'application/json'
+          const blob = new Blob([content], { type: mimeType })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = filename
+          a.click()
+          URL.revokeObjectURL(url)
+          return
+        }
+        filename = `oxygen-results-${job.id.slice(0, 8)}.csv`
+        mimeType = 'text/csv'
+      }
+      
+      const blob = new Blob([content], { type: mimeType })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+
+    // Get the active job (most recent or selected)
+    const activeJob = selectedJob || (jobs.length > 0 ? jobs[0] : null)
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      <div className="container mx-auto px-4 py-8 max-w-6xl">
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white mb-2">
             Oxygen<span className="text-purple-400">TM</span>
           </h1>
-          <p className="text-slate-300 text-lg">Customer Portal</p>
-          <p className="text-sm text-slate-400 mt-1">
-            Submit compute tasks for distributed processing across the network
-          </p>
+          <p className="text-slate-300 text-lg">Distributed Compute Platform</p>
           <a 
             href="/worker.html" 
             className="inline-flex items-center gap-1 text-purple-400 hover:text-purple-300 text-sm mt-2"
@@ -468,17 +525,22 @@ function CustomerPortal() {
           </a>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Upload Section */}
+        {/* 3-Part Flow: Input → Processing → Output */}
+        <div className="space-y-6">
+          
+          {/* ===== SECTION 1: INPUT ===== */}
           <Card className="bg-white/95">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="h-5 w-5" />
-                Submit Compute Job
-              </CardTitle>
-              <CardDescription>
-                Choose a compute kernel and upload your data
-              </CardDescription>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-purple-100 text-purple-600 font-bold">1</div>
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Upload className="h-5 w-5" />
+                    Input
+                  </CardTitle>
+                  <CardDescription>Choose a task type and provide your data</CardDescription>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Kernel Type Selector */}
@@ -955,32 +1017,42 @@ White tennis shoes for sports
             </CardContent>
           </Card>
 
-          {/* Jobs List */}
+          {/* ===== SECTION 2: PROCESSING ===== */}
           <Card className="bg-white/95">
-            <CardHeader>
-              <CardTitle>Your Jobs</CardTitle>
-              <CardDescription>
-                Track processing progress and view results
-              </CardDescription>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-blue-100 text-blue-600 font-bold">2</div>
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Play className="h-5 w-5" />
+                    Processing
+                  </CardTitle>
+                  <CardDescription>Watch distributed workers process your job</CardDescription>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               {jobs.length === 0 ? (
-                <p className="text-center text-gray-500 py-8">No jobs submitted yet</p>
+                <div className="text-center py-8 text-gray-500">
+                  <Clock className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                  <p>No jobs submitted yet</p>
+                  <p className="text-sm">Submit a job above to see processing status</p>
+                </div>
               ) : (
-                <div className="space-y-3 max-h-96 overflow-y-auto">
-                  {jobs.map((job) => (
+                <div className="space-y-4">
+                  {jobs.slice(0, 3).map((job) => (
                     <div 
                       key={job.id}
-                      className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                      className={`p-4 border rounded-lg cursor-pointer transition-colors ${
                         selectedJob?.id === job.id ? 'border-purple-500 bg-purple-50' : 'hover:bg-gray-50'
                       }`}
                       onClick={() => fetchJobDetails(job.id)}
                     >
-                      <div className="flex justify-between items-start mb-2">
+                      <div className="flex justify-between items-start mb-3">
                         <div className="flex items-center gap-2">
                           {getKernelIcon(job.kernel_type)}
                           <div>
-                            <p className="font-medium text-sm">
+                            <p className="font-medium">
                               {KERNELS.find(k => k.type === job.kernel_type)?.name || job.kernel_type}
                             </p>
                             <p className="text-xs text-gray-500">
@@ -990,23 +1062,150 @@ White tennis shoes for sports
                         </div>
                         {getStatusBadge(job.status)}
                       </div>
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs text-gray-600">
-                          <span>Progress</span>
-                          <span>{job.verified_fragments} / {job.total_fragments} fragments verified</span>
-                        </div>
+                      <div className="space-y-2">
                         <Progress 
                           value={job.total_fragments > 0 ? (job.verified_fragments / job.total_fragments) * 100 : 0} 
-                          className="h-2"
+                          className="h-3"
                         />
-                        {job.escrow_amount > 0 && (
-                          <div className="text-xs text-gray-500">
-                            Escrow: ${job.escrow_amount.toFixed(4)}
-                          </div>
-                        )}
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">
+                            {job.verified_fragments} / {job.total_fragments} fragments verified
+                          </span>
+                          <span className="text-gray-500">
+                            ${job.escrow_amount.toFixed(4)} escrowed
+                          </span>
+                        </div>
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* ===== SECTION 3: OUTPUT ===== */}
+          <Card className="bg-white/95">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-green-100 text-green-600 font-bold">3</div>
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Download className="h-5 w-5" />
+                    Output
+                  </CardTitle>
+                  <CardDescription>Download your processed results</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {!activeJob ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Download className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                  <p>No results yet</p>
+                  <p className="text-sm">Results will appear here when processing completes</p>
+                </div>
+              ) : activeJob.status !== 'completed' ? (
+                <div className="text-center py-8">
+                  <Loader2 className="h-12 w-12 mx-auto mb-3 text-blue-500 animate-spin" />
+                  <p className="text-gray-600">Processing in progress...</p>
+                  <p className="text-sm text-gray-500">
+                    {activeJob.verified_fragments} / {activeJob.total_fragments} fragments complete
+                  </p>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Open the <a href="/worker.html" className="text-purple-500 hover:underline">Worker Portal</a> to contribute compute power
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
+                    <CheckCircle className="h-10 w-10 mx-auto mb-2 text-green-500" />
+                    <p className="font-medium text-green-800">Processing Complete!</p>
+                    <p className="text-sm text-green-600">
+                      {KERNELS.find(k => k.type === activeJob.kernel_type)?.name}
+                    </p>
+                  </div>
+                  
+                  {/* Results Summary */}
+                  {activeJob.kernel_type === 'text_embed' && activeJob.result && (
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-medium mb-2">Results Summary</h4>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <p className="text-gray-500">Total Items</p>
+                          <p className="font-mono text-lg">{(activeJob.result.total_items as number) || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">Embedding Dimensions</p>
+                          <p className="font-mono text-lg">{(activeJob.result.embedding_dim as number) || 0}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {activeJob.kernel_type === 'image_embed' && activeJob.result && (
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-medium mb-2">Results Summary</h4>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <p className="text-gray-500">Total Images</p>
+                          <p className="font-mono text-lg">{(activeJob.result.total_images as number) || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">Embedding Dimensions</p>
+                          <p className="font-mono text-lg">{(activeJob.result.embedding_dim as number) || 0}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {activeJob.kernel_type === 'video_analyze' && activeJob.result && (
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-medium mb-2">Results Summary</h4>
+                      <div className="grid grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <p className="text-gray-500">Frames Analyzed</p>
+                          <p className="font-mono text-lg">{(activeJob.result.total_frames_analyzed as number) || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">Detections</p>
+                          <p className="font-mono text-lg">{((activeJob.result.detections as unknown[])?.length) || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">Highlights</p>
+                          <p className="font-mono text-lg">{((activeJob.result.highlights as unknown[])?.length) || 0}</p>
+                        </div>
+                      </div>
+                      {activeJob.result.detection_counts ? (
+                        <div className="mt-3 pt-3 border-t">
+                          <p className="text-sm text-gray-500 mb-2">Detected Objects:</p>
+                          <div className="flex flex-wrap gap-2">
+                            {Object.entries(activeJob.result.detection_counts as Record<string, number>).map(([label, count]) => (
+                              <Badge key={label} variant="secondary">{label}: {String(count)}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                  
+                  {/* Download Buttons */}
+                  <div className="flex gap-3">
+                    <Button 
+                      onClick={() => downloadResults(activeJob, 'json')}
+                      className="flex-1 bg-purple-600 hover:bg-purple-700"
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      Download JSON
+                    </Button>
+                    <Button 
+                      onClick={() => downloadResults(activeJob, 'csv')}
+                      variant="outline"
+                      className="flex-1"
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      Download CSV
+                    </Button>
+                  </div>
                 </div>
               )}
             </CardContent>
