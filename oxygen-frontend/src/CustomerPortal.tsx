@@ -113,7 +113,9 @@ function CustomerPortal() {
     try {
       const res = await fetch(`${API_URL}/jobs?customer_id=demo-customer`)
       const data = await res.json()
-      setJobs(data)
+      // Sort jobs by created_at descending (newest first)
+      const sortedJobs = data.sort((a: Job, b: Job) => b.created_at - a.created_at)
+      setJobs(sortedJobs)
     } catch (err) {
       console.error('Failed to fetch jobs:', err)
     }
