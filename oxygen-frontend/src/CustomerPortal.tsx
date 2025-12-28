@@ -370,7 +370,11 @@ function CustomerPortal() {
     setIsUploading(false)
   }
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, job?: Job) => {
+    // If all fragments are verified, show as completed regardless of status string
+    if (job && job.total_fragments > 0 && job.verified_fragments >= job.total_fragments) {
+      return <Badge className="bg-green-600">Completed</Badge>
+    }
     switch (status) {
       case 'completed':
         return <Badge className="bg-green-600">Completed</Badge>
@@ -1070,7 +1074,7 @@ White tennis shoes for sports
                             </p>
                           </div>
                         </div>
-                        {getStatusBadge(job.status)}
+                        {getStatusBadge(job.status, job)}
                       </div>
                       <div className="space-y-2">
                         <Progress 
