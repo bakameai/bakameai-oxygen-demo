@@ -508,6 +508,16 @@ function CustomerPortal() {
 
     // Get the active job (most recent or selected)
     const activeJob = selectedJob || (jobs.length > 0 ? jobs[0] : null)
+    
+    // Auto-fetch job details when a job completes all fragments (to get the result)
+    useEffect(() => {
+      if (activeJob && 
+          activeJob.total_fragments > 0 && 
+          activeJob.verified_fragments >= activeJob.total_fragments &&
+          !activeJob.result) {
+        fetchJobDetails(activeJob.id)
+      }
+    }, [activeJob, fetchJobDetails])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
@@ -1104,7 +1114,7 @@ White tennis shoes for sports
                   <p>No results yet</p>
                   <p className="text-sm">Results will appear here when processing completes</p>
                 </div>
-              ) : activeJob.status !== 'completed' ? (
+              ) : (activeJob.total_fragments > 0 && activeJob.verified_fragments < activeJob.total_fragments) ? (
                 <div className="text-center py-8">
                   <Loader2 className="h-12 w-12 mx-auto mb-3 text-blue-500 animate-spin" />
                   <p className="text-gray-600">Processing in progress...</p>
