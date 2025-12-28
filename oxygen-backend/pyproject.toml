@@ -10,6 +10,7 @@ python = "^3.12"
 fastapi = {extras = ["standard"], version = "^0.124.4"}
 psycopg = {extras = ["binary"], version = "^3.3.2"}
 python-multipart = "^0.0.20"
+supabase = "^2.27.0"
 
 
 [build-system]

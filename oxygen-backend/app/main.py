@@ -10,6 +10,7 @@ import hashlib
 from datetime import datetime
 from enum import Enum
 import asyncio
+from app import database as db
 
 app = FastAPI(title="Oxygen Distributed Compute Network")
 
@@ -154,7 +155,9 @@ class Payment(BaseModel):
     task_id: Optional[str] = None
     fragment_id: Optional[str] = None
 
-# ============== IN-MEMORY DATABASE ==============
+# ============== IN-MEMORY CACHE (backed by Supabase) ==============
+# These caches are used for real-time operations and WebSocket connections
+# Data is persisted to Supabase for durability across restarts
 jobs_db: dict[str, Job] = {}
 fragments_db: dict[str, Fragment] = {}
 tasks_db: dict[str, Task] = {}
@@ -164,6 +167,86 @@ payments_db: dict[str, Payment] = {}
 escrow_db: dict[str, float] = {}
 data_db: dict[str, bytes] = {}
 results_db: dict[str, bytes] = {}
+
+# Flag to track if we've loaded from Supabase
+_db_initialized = False
+
+def ensure_db_loaded():
+    """Load data from Supabase into memory cache on first access"""
+    global _db_initialized
+    if _db_initialized:
+        return
+    _db_initialized = True
+    try:
+        # Load jobs from Supabase
+        jobs = db.list_jobs()
+        for job_data in jobs:
+            job = Job(
+                id=job_data["id"],
+                kernel_type=KernelType(job_data["kernel_type"]),
+                customer_id=job_data["customer_id"],
+                status=JobStatus(job_data["status"]),
+                created_at=job_data["created_at"],
+                completed_at=job_data.get("completed_at"),
+                total_fragments=job_data.get("total_fragments", 0),
+                verified_fragments=job_data.get("verified_fragments", 0),
+                params=job_data.get("params", {}),
+                result=job_data.get("result"),
+                lifecycle=job_data.get("lifecycle", [])
+            )
+            jobs_db[job.id] = job
+            
+            # Load fragments for this job
+            fragments = db.list_fragments_by_job(job.id)
+            for frag_data in fragments:
+                fragment = Fragment(
+                    id=frag_data["id"],
+                    job_id=frag_data["job_id"],
+                    fragment_index=frag_data["fragment_index"],
+                    shard_id=frag_data["shard_id"],
+                    shard_params=frag_data.get("shard_params", {}),
+                    status=FragmentStatus(frag_data["status"]),
+                    created_at=frag_data["created_at"],
+                    completed_at=frag_data.get("completed_at"),
+                    verified_result=frag_data.get("result")
+                )
+                fragments_db[fragment.id] = fragment
+                
+                # Load tasks for this fragment
+                tasks = db.list_tasks_by_fragment(fragment.id)
+                for task_data in tasks:
+                    task = Task(
+                        id=task_data["id"],
+                        fragment_id=task_data["fragment_id"],
+                        job_id=job.id,
+                        worker_id=task_data.get("worker_id"),
+                        status=TaskStatus(task_data["status"]),
+                        created_at=task_data["created_at"],
+                        result_data=task_data.get("result")
+                    )
+                    tasks_db[task.id] = task
+                    if task.status == TaskStatus.PENDING:
+                        task_queue.append(task.id)
+        
+        # Load workers from Supabase
+        workers = db.list_workers()
+        for worker_data in workers:
+            worker = Worker(
+                id=worker_data["id"],
+                name=worker_data["name"],
+                device_info=worker_data.get("device_info", {}),
+                capabilities=worker_data.get("capabilities", {}),
+                connected_at=worker_data["connected_at"],
+                last_heartbeat=worker_data["last_heartbeat"],
+                total_tasks_completed=worker_data.get("total_tasks_completed", 0),
+                total_earnings=worker_data.get("total_earnings", 0.0),
+                current_task_id=worker_data.get("current_task_id")
+            )
+            workers_db[worker.id] = worker
+        
+        print(f"Loaded from Supabase: {len(jobs_db)} jobs, {len(fragments_db)} fragments, {len(tasks_db)} tasks, {len(workers_db)} workers")
+    except Exception as e:
+        print(f"Error loading from Supabase: {e}")
 
 network_stats = {
     "total_devices": 0,
@@ -476,6 +559,8 @@ async def upload_data(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="File too large (max 10MB)")
     data_id = str(uuid.uuid4())
     data_db[data_id] = contents
+    # Persist to Supabase
+    db.store_data(data_id, contents)
     filename = file.filename or ""
     file_type = "binary"
     if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
@@ -486,14 +571,26 @@ async def upload_data(file: UploadFile = File(...)):
 
 @app.get("/data/{data_id}")
 async def get_data(data_id: str):
-    if data_id not in data_db:
-        raise HTTPException(status_code=404, detail="Data not found")
-    return Response(content=data_db[data_id], media_type="application/octet-stream")
+    # Check in-memory cache first
+    if data_id in data_db:
+        return Response(content=data_db[data_id], media_type="application/octet-stream")
+    # Try to load from Supabase
+    data = db.get_data(data_id)
+    if data:
+        data_db[data_id] = data  # Cache it
+        return Response(content=data, media_type="application/octet-stream")
+    raise HTTPException(status_code=404, detail="Data not found")
 
 @app.get("/data/{data_id}/range")
 async def get_data_range(data_id: str, start: int = 0, end: Optional[int] = None):
+    # Check in-memory cache first
     if data_id not in data_db:
-        raise HTTPException(status_code=404, detail="Data not found")
+        # Try to load from Supabase
+        data = db.get_data(data_id)
+        if data:
+            data_db[data_id] = data  # Cache it
+        else:
+            raise HTTPException(status_code=404, detail="Data not found")
     data = data_db[data_id]
     if end is None:
         end = len(data)
@@ -683,6 +780,47 @@ async def create_job(data_id: str, kernel_type: KernelType, customer_id: str = "
         await queue_fragment_tasks(fragment)
     job.status = JobStatus.QUEUED
     add_job_lifecycle_event(job, "queued", {"tasks_created": len(fragments_to_create) * REDUNDANCY_FACTOR})
+    
+    # Persist job to Supabase
+    db.create_job({
+        "id": job.id,
+        "customer_id": job.customer_id,
+        "kernel_type": job.kernel_type.value,
+        "status": job.status.value,
+        "params": job.params,
+        "total_fragments": job.total_fragments,
+        "verified_fragments": job.verified_fragments,
+        "result": job.result,
+        "created_at": job.created_at,
+        "completed_at": job.completed_at,
+        "lifecycle": job.lifecycle
+    })
+    # Persist data to Supabase
+    if data_id in data_db:
+        db.store_data(data_id, data_db[data_id])
+    # Persist fragments to Supabase
+    for frag in fragments_db.values():
+        if frag.job_id == job_id:
+            db.create_fragment({
+                "id": frag.id,
+                "job_id": frag.job_id,
+                "fragment_index": frag.fragment_index,
+                "shard_id": frag.shard_id,
+                "shard_params": frag.shard_params,
+                "status": frag.status.value,
+                "created_at": frag.created_at
+            })
+    # Persist tasks to Supabase
+    for task in tasks_db.values():
+        if task.job_id == job_id:
+            db.create_task({
+                "id": task.id,
+                "fragment_id": task.fragment_id,
+                "worker_id": task.worker_id,
+                "status": task.status.value,
+                "created_at": task.created_at
+            })
+    
     await manager.broadcast_to_workers({"type": "new_job", "job_id": job_id, "kernel_type": kernel_type.value, "fragment_count": len(fragments_to_create), "tasks_per_fragment": REDUNDANCY_FACTOR})
     await manager.broadcast_to_clients({"type": "job_created", "job": job.model_dump()})
     return job
@@ -820,6 +958,7 @@ async def get_job_source_image(job_id: str):
 
 @app.get("/jobs")
 async def list_jobs(customer_id: Optional[str] = None):
+    ensure_db_loaded()  # Load from Supabase on first access
     if customer_id:
         return [j.model_dump() for j in jobs_db.values() if j.customer_id == customer_id]
     return [j.model_dump() for j in jobs_db.values()]
