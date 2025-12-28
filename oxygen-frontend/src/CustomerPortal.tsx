@@ -1117,7 +1117,12 @@ White tennis shoes for sports
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {jobs.slice(0, 3).map((job) => (
+                  {jobs.length > 1 && (
+                    <div className="text-sm text-gray-500 mb-2">
+                      Showing {Math.min(jobs.length, 10)} of {jobs.length} jobs - you can submit more jobs while these are processing
+                    </div>
+                  )}
+                  {jobs.slice(0, 10).map((job) => (
                     <div 
                       key={job.id}
                       className={`p-4 border rounded-lg cursor-pointer transition-colors ${

@@ -36,6 +36,7 @@ def create_job(job_data: dict) -> dict:
             "customer_id": job_data["customer_id"],
             "kernel_type": job_data["kernel_type"],
             "status": job_data["status"],
+            "data_id": job_data.get("data_id"),
             "params": json.dumps(job_data.get("params", {})),
             "total_fragments": job_data.get("total_fragments", 0),
             "verified_fragments": job_data.get("verified_fragments", 0),
@@ -78,6 +79,7 @@ def list_jobs(customer_id: Optional[str] = None) -> list:
             job["params"] = json.loads(job["params"]) if job.get("params") else {}
             job["result"] = json.loads(job["result"]) if job.get("result") else None
             job["lifecycle"] = json.loads(job["lifecycle_events"]) if job.get("lifecycle_events") else []
+            # data_id is stored directly, no parsing needed
             jobs.append(job)
         return jobs
     except Exception as e:

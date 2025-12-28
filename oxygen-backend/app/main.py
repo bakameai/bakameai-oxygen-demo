@@ -190,6 +190,7 @@ def ensure_db_loaded():
                 completed_at=job_data.get("completed_at"),
                 total_fragments=job_data.get("total_fragments", 0),
                 verified_fragments=job_data.get("verified_fragments", 0),
+                data_id=job_data.get("data_id"),
                 params=job_data.get("params", {}),
                 result=job_data.get("result"),
                 lifecycle=job_data.get("lifecycle", [])
