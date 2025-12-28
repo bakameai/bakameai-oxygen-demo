@@ -6,7 +6,10 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Upload, Image, CheckCircle, Clock, Loader2, ExternalLink, FileText, Hash, Grid3X3, File, Download, Play } from 'lucide-react'
+import { Upload, Image, CheckCircle, Clock, Loader2, ExternalLink, FileText, Hash, Grid3X3, File, Download, Play, FileSpreadsheet, FileType, Link } from 'lucide-react'
+import * as XLSX from 'xlsx'
+import { jsPDF } from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -455,62 +458,121 @@ function CustomerPortal() {
       return false
     }
 
-    // Download results as JSON or CSV
-    const downloadResults = (job: Job, format: 'json' | 'csv') => {
+    // Helper to get data rows for export
+    const getExportData = (job: Job): { headers: string[], rows: (string | number)[][] } => {
+      if (job.kernel_type === 'text_embed' && job.result?.embeddings) {
+        const embeddings = job.result.embeddings as number[][]
+        const items = job.result.items as string[]
+        const headers = ['item', ...Array(embeddings[0]?.length || 0).fill(0).map((_, i) => `dim_${i}`)]
+        const rows = items.map((item, i) => [item, ...(embeddings[i] || [])])
+        return { headers, rows }
+      } else if (job.kernel_type === 'image_embed' && job.result?.embeddings) {
+        const embeddings = job.result.embeddings as number[][]
+        const imageIds = job.result.image_ids as string[]
+        const headers = ['image_id', ...Array(embeddings[0]?.length || 0).fill(0).map((_, i) => `dim_${i}`)]
+        const rows = imageIds.map((id, i) => [id, ...(embeddings[i] || [])])
+        return { headers, rows }
+      } else if (job.kernel_type === 'video_analyze' && job.result?.detections) {
+        const detections = job.result.detections as Array<{frame: number, timestamp: number, label: string, confidence: number}>
+        const headers = ['frame', 'timestamp', 'label', 'confidence']
+        const rows = detections.map(d => [d.frame, d.timestamp, d.label, d.confidence])
+        return { headers, rows }
+      }
+      return { headers: ['key', 'value'], rows: Object.entries(job.result || {}).map(([k, v]) => [k, String(v)]) }
+    }
+
+    // Download results in various formats
+    const downloadResults = (job: Job, format: 'json' | 'csv' | 'xlsx' | 'txt' | 'pdf') => {
       if (!job.result) return
       
-      let content: string
-      let filename: string
-      let mimeType: string
+      const { headers, rows } = getExportData(job)
+      const filename = `oxygen-results-${job.id.slice(0, 8)}`
       
       if (format === 'json') {
-        content = JSON.stringify(job.result, null, 2)
-        filename = `oxygen-results-${job.id.slice(0, 8)}.json`
-        mimeType = 'application/json'
-      } else {
-        // Convert to CSV based on kernel type
-        if (job.kernel_type === 'text_embed' && job.result.embeddings) {
-          const embeddings = job.result.embeddings as number[][]
-          const items = job.result.items as string[]
-          const headers = ['item', ...Array(embeddings[0]?.length || 0).fill(0).map((_, i) => `dim_${i}`)]
-          const rows = items.map((item, i) => [item, ...(embeddings[i] || [])].join(','))
-          content = [headers.join(','), ...rows].join('\n')
-        } else if (job.kernel_type === 'image_embed' && job.result.embeddings) {
-          const embeddings = job.result.embeddings as number[][]
-          const imageIds = job.result.image_ids as string[]
-          const headers = ['image_id', ...Array(embeddings[0]?.length || 0).fill(0).map((_, i) => `dim_${i}`)]
-          const rows = imageIds.map((id, i) => [id, ...(embeddings[i] || [])].join(','))
-          content = [headers.join(','), ...rows].join('\n')
-        } else if (job.kernel_type === 'video_analyze' && job.result.detections) {
-          const detections = job.result.detections as Array<{frame: number, timestamp: number, label: string, confidence: number}>
-          const headers = ['frame', 'timestamp', 'label', 'confidence']
-          const rows = detections.map(d => [d.frame, d.timestamp, d.label, d.confidence].join(','))
-          content = [headers.join(','), ...rows].join('\n')
-        } else {
-          content = JSON.stringify(job.result, null, 2)
-          filename = `oxygen-results-${job.id.slice(0, 8)}.json`
-          mimeType = 'application/json'
-          const blob = new Blob([content], { type: mimeType })
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = filename
-          a.click()
-          URL.revokeObjectURL(url)
-          return
+        const content = JSON.stringify(job.result, null, 2)
+        const blob = new Blob([content], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${filename}.json`
+        a.click()
+        URL.revokeObjectURL(url)
+      } else if (format === 'csv') {
+        const csvRows = [headers.join(','), ...rows.map(r => r.join(','))]
+        const content = csvRows.join('\n')
+        const blob = new Blob([content], { type: 'text/csv' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${filename}.csv`
+        a.click()
+        URL.revokeObjectURL(url)
+      } else if (format === 'xlsx') {
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+        const wb = XLSX.utils.book_new()
+        XLSX.utils.book_append_sheet(wb, ws, 'Results')
+        XLSX.writeFile(wb, `${filename}.xlsx`)
+      } else if (format === 'txt') {
+        const kernelName = KERNELS.find(k => k.type === job.kernel_type)?.name || job.kernel_type
+        let content = `Oxygen Compute Results\n`
+        content += `======================\n\n`
+        content += `Job ID: ${job.id}\n`
+        content += `Kernel: ${kernelName}\n`
+        content += `Status: ${job.status}\n`
+        content += `Created: ${new Date(job.created_at * 1000).toLocaleString()}\n`
+        if (job.completed_at) {
+          content += `Completed: ${new Date(job.completed_at * 1000).toLocaleString()}\n`
         }
-        filename = `oxygen-results-${job.id.slice(0, 8)}.csv`
-        mimeType = 'text/csv'
+        content += `\nResults:\n--------\n`
+        content += headers.join('\t') + '\n'
+        rows.forEach(row => {
+          content += row.join('\t') + '\n'
+        })
+        const blob = new Blob([content], { type: 'text/plain' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${filename}.txt`
+        a.click()
+        URL.revokeObjectURL(url)
+      } else if (format === 'pdf') {
+        const doc = new jsPDF()
+        const kernelName = KERNELS.find(k => k.type === job.kernel_type)?.name || job.kernel_type
+        
+        doc.setFontSize(20)
+        doc.text('Oxygen Compute Results', 14, 22)
+        
+        doc.setFontSize(12)
+        doc.text(`Job ID: ${job.id}`, 14, 35)
+        doc.text(`Kernel: ${kernelName}`, 14, 42)
+        doc.text(`Status: ${job.status}`, 14, 49)
+        doc.text(`Created: ${new Date(job.created_at * 1000).toLocaleString()}`, 14, 56)
+        if (job.completed_at) {
+          doc.text(`Completed: ${new Date(job.completed_at * 1000).toLocaleString()}`, 14, 63)
+        }
+        
+        const tableData = rows.map(row => row.map(cell => String(cell)))
+        const displayHeaders = headers.length > 10 ? headers.slice(0, 10).concat(['...']) : headers
+        const displayRows = tableData.map(row => row.length > 10 ? row.slice(0, 10).concat(['...']) : row)
+        
+        autoTable(doc, {
+          head: [displayHeaders],
+          body: displayRows.slice(0, 50),
+          startY: 75,
+          styles: { fontSize: 8 },
+          headStyles: { fillColor: [147, 51, 234] }
+        })
+        
+        if (rows.length > 50) {
+          doc.text(`... and ${rows.length - 50} more rows (download CSV/Excel for full data)`, 14, doc.internal.pageSize.height - 10)
+        }
+        
+        doc.save(`${filename}.pdf`)
       }
-      
-      const blob = new Blob([content], { type: mimeType })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      a.click()
-      URL.revokeObjectURL(url)
     }
+    
+    // Show API endpoint info
+    const [showApiInfo, setShowApiInfo] = useState(false)
 
     // Get the active job (most recent or selected)
     const activeJob = selectedJob || (jobs.length > 0 ? jobs[0] : null)
@@ -1205,22 +1267,72 @@ White tennis shoes for sports
                   )}
                   
                   {/* Download Buttons */}
-                  <div className="flex gap-3">
-                    <Button 
-                      onClick={() => downloadResults(activeJob, 'json')}
-                      className="flex-1 bg-purple-600 hover:bg-purple-700"
-                    >
-                      <Download className="h-4 w-4 mr-2" />
-                      Download JSON
-                    </Button>
-                    <Button 
-                      onClick={() => downloadResults(activeJob, 'csv')}
-                      variant="outline"
-                      className="flex-1"
-                    >
-                      <Download className="h-4 w-4 mr-2" />
-                      Download CSV
-                    </Button>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      <Button 
+                        onClick={() => downloadResults(activeJob, 'json')}
+                        className="bg-purple-600 hover:bg-purple-700"
+                        size="sm"
+                      >
+                        <Download className="h-4 w-4 mr-1" />
+                        JSON
+                      </Button>
+                      <Button 
+                        onClick={() => downloadResults(activeJob, 'csv')}
+                        variant="outline"
+                        size="sm"
+                      >
+                        <Download className="h-4 w-4 mr-1" />
+                        CSV
+                      </Button>
+                      <Button 
+                        onClick={() => downloadResults(activeJob, 'xlsx')}
+                        variant="outline"
+                        size="sm"
+                      >
+                        <FileSpreadsheet className="h-4 w-4 mr-1" />
+                        Excel
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <Button 
+                        onClick={() => downloadResults(activeJob, 'txt')}
+                        variant="outline"
+                        size="sm"
+                      >
+                        <FileType className="h-4 w-4 mr-1" />
+                        Text
+                      </Button>
+                      <Button 
+                        onClick={() => downloadResults(activeJob, 'pdf')}
+                        variant="outline"
+                        size="sm"
+                      >
+                        <FileText className="h-4 w-4 mr-1" />
+                        PDF
+                      </Button>
+                      <Button 
+                        onClick={() => setShowApiInfo(!showApiInfo)}
+                        variant="outline"
+                        size="sm"
+                      >
+                        <Link className="h-4 w-4 mr-1" />
+                        API
+                      </Button>
+                    </div>
+                    
+                    {/* API Endpoint Info */}
+                    {showApiInfo && (
+                      <div className="mt-3 p-3 bg-gray-100 rounded-lg text-sm">
+                        <p className="font-medium mb-2">API Endpoint:</p>
+                        <code className="block bg-gray-200 p-2 rounded text-xs break-all">
+                          GET {API_URL}/jobs/{activeJob.id}
+                        </code>
+                        <p className="mt-2 text-gray-600 text-xs">
+                          Use this endpoint to fetch results programmatically. Returns JSON with full job details and results.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
