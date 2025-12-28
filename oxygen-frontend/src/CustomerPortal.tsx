@@ -338,12 +338,15 @@ function CustomerPortal() {
             }
       
       // Create job using generic endpoint
-      // For text_items, pass data inline to handle multi-instance deployments
-      let jobUrl = `${API_URL}/jobs/create?data_id=${dataId}&kernel_type=${kernelType}&customer_id=demo-customer&params=${encodeURIComponent(JSON.stringify(params))}`
+      // For text_items, pass data inline in POST body to handle multi-instance deployments
+      // (using body instead of query param to avoid URL length limits)
+      const jobUrl = `${API_URL}/jobs/create?data_id=${dataId}&kernel_type=${kernelType}&customer_id=demo-customer&params=${encodeURIComponent(JSON.stringify(params))}`
+      const fetchOptions: RequestInit = { method: 'POST' }
       if (selectedKernel?.input_type === 'text_items' && textItems) {
-        jobUrl += `&inline_data=${encodeURIComponent(textItems)}`
+        fetchOptions.headers = { 'Content-Type': 'application/json' }
+        fetchOptions.body = JSON.stringify({ inline_data: textItems })
       }
-      const jobRes = await fetch(jobUrl, { method: 'POST' })
+      const jobRes = await fetch(jobUrl, fetchOptions)
       
       if (!jobRes.ok) throw new Error('Job creation failed')
       

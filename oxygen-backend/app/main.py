@@ -499,11 +499,16 @@ async def get_data_range(data_id: str, start: int = 0, end: Optional[int] = None
         end = len(data)
     return Response(content=data[start:end], media_type="application/octet-stream")
 
+class JobCreateRequest(BaseModel):
+    inline_data: Optional[str] = None
+
 @app.post("/jobs/create")
-async def create_job(data_id: str, kernel_type: KernelType, customer_id: str = "demo-customer", params: str = "{}", inline_data: Optional[str] = None):
-    # If inline_data is provided, store it directly (handles multi-instance deployments)
-    if inline_data is not None:
-        data_db[data_id] = inline_data.encode('utf-8')
+async def create_job(data_id: str, kernel_type: KernelType, customer_id: str = "demo-customer", params: str = "{}", inline_data: Optional[str] = None, body: Optional[JobCreateRequest] = None):
+    # If inline_data is provided (from query param or body), store it directly (handles multi-instance deployments)
+    # Prefer body over query param to avoid URL length limits
+    actual_inline_data = (body.inline_data if body and body.inline_data else None) or inline_data
+    if actual_inline_data is not None:
+        data_db[data_id] = actual_inline_data.encode('utf-8')
     # Matrix multiplication doesn't require uploaded data - it generates random matrices
     if kernel_type != KernelType.MATRIX_MULTIPLY and data_id not in data_db:
         raise HTTPException(status_code=404, detail="Data not found")
