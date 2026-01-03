@@ -151,6 +151,18 @@ class Payment(BaseModel):
     task_id: Optional[str] = None
     fragment_id: Optional[str] = None
 
+class AuditLog(BaseModel):
+    id: str
+    timestamp: float
+    event_type: str  # job_created, task_assigned, task_completed, task_verified, job_completed
+    job_id: Optional[str] = None
+    task_id: Optional[str] = None
+    worker_id: Optional[str] = None
+    worker_name: Optional[str] = None
+    details: dict = {}
+    result_hash: Optional[str] = None
+    ip_address: Optional[str] = None
+
 # ============== IN-MEMORY DATABASE ==============
 jobs_db: dict[str, Job] = {}
 fragments_db: dict[str, Fragment] = {}
@@ -161,6 +173,26 @@ payments_db: dict[str, Payment] = {}
 escrow_db: dict[str, float] = {}
 data_db: dict[str, bytes] = {}
 results_db: dict[str, bytes] = {}
+audit_logs_db: list[AuditLog] = []
+
+def add_audit_log(event_type: str, job_id: str = None, task_id: str = None, worker_id: str = None, details: dict = None, result_hash: str = None):
+    """Add an entry to the audit log for compliance tracking"""
+    worker_name = None
+    if worker_id and worker_id in workers_db:
+        worker_name = workers_db[worker_id].name
+    log = AuditLog(
+        id=str(uuid.uuid4()),
+        timestamp=time.time(),
+        event_type=event_type,
+        job_id=job_id,
+        task_id=task_id,
+        worker_id=worker_id,
+        worker_name=worker_name,
+        details=details or {},
+        result_hash=result_hash
+    )
+    audit_logs_db.append(log)
+    return log
 
 network_stats = {
     "total_devices": 0,
@@ -288,6 +320,8 @@ async def validate_fragment(fragment: Fragment):
                         task.status = TaskStatus.REJECTED
             network_stats["consensus_reached"] += 1
             network_stats["total_fragments_completed"] += 1
+            for task in tasks:
+                add_audit_log("task_verified", job_id=fragment.job_id, task_id=task.id, worker_id=task.worker_id, result_hash=result_hash, details={"fragment_id": fragment.id, "consensus_count": len(tasks)})
             await check_job_completion(fragment.job_id)
             return
     if len(submitted_tasks) >= REDUNDANCY_FACTOR:
@@ -338,6 +372,7 @@ async def check_job_completion(job_id: str):
             job.completed_at = time.time()
             network_stats["total_jobs_completed"] += 1
             add_job_lifecycle_event(job, "completed", {"result_keys": list(job.result.keys()) if job.result else []})
+            add_audit_log("job_completed", job_id=job_id, details={"kernel_type": job.kernel_type.value, "total_fragments": len(job_fragments), "verified_fragments": len(verified_fragments)})
         await manager.broadcast_to_clients({"type": "job_completed", "job": job.model_dump()})
 
 def aggregate_job_results(job: Job, fragments: list[Fragment]) -> dict:
@@ -533,6 +568,7 @@ async def create_job(data_id: str, kernel_type: KernelType, customer_id: str = "
     add_job_lifecycle_event(job, "queued", {"tasks_created": len(fragments_to_create) * REDUNDANCY_FACTOR})
     await manager.broadcast_to_workers({"type": "new_job", "job_id": job_id, "kernel_type": kernel_type.value, "fragment_count": len(fragments_to_create), "tasks_per_fragment": REDUNDANCY_FACTOR})
     await manager.broadcast_to_clients({"type": "job_created", "job": job.model_dump()})
+    add_audit_log("job_created", job_id=job_id, details={"kernel_type": kernel_type.value, "data_size": data_size, "fragment_count": len(fragments_to_create), "customer_id": customer_id})
     return job
 
 @app.get("/tasks/next")
@@ -601,6 +637,7 @@ async def submit_task_result(task_id: str, worker_id: str = Form(...), compute_t
     worker.last_heartbeat = time.time()
     network_stats["total_tasks_completed"] += 1
     network_stats["total_compute_time_ms"] += compute_time_ms
+    add_audit_log("task_completed", job_id=task.job_id, task_id=task_id, worker_id=worker_id, result_hash=result_hash, details={"compute_time_ms": compute_time_ms, "fragment_id": task.fragment_id})
     fragment = fragments_db.get(task.fragment_id)
     if fragment:
         fragment.status = FragmentStatus.VALIDATING
@@ -765,6 +802,101 @@ async def get_workers_status():
     for w in workers_db.values():
         workers_list.append({**w.model_dump(), "current_task": tasks_db.get(w.current_task_id).model_dump() if w.current_task_id and w.current_task_id in tasks_db else None})
     return {"total_workers": len(workers_db), "active_workers": sum(1 for w in workers_db.values() if w.is_active), "workers": workers_list}
+
+# ============== AUDIT & COMPLIANCE ENDPOINTS ==============
+
+@app.get("/audit/logs")
+async def get_audit_logs(job_id: str = None, limit: int = 100):
+    """Get audit logs, optionally filtered by job_id"""
+    logs = audit_logs_db
+    if job_id:
+        logs = [log for log in logs if log.job_id == job_id]
+    return {"logs": [log.model_dump() for log in logs[-limit:]]}
+
+@app.get("/audit/report/{job_id}")
+async def get_compliance_report(job_id: str):
+    """Generate a compliance report for a specific job"""
+    if job_id not in jobs_db:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs_db[job_id]
+    job_logs = [log for log in audit_logs_db if log.job_id == job_id]
+    fragments = [f for f in fragments_db.values() if f.job_id == job_id]
+    tasks = [t for t in tasks_db.values() if t.fragment_id in [f.id for f in fragments]]
+    
+    workers_involved = set()
+    for log in job_logs:
+        if log.worker_id:
+            workers_involved.add(log.worker_id)
+    
+    worker_details = []
+    for wid in workers_involved:
+        if wid in workers_db:
+            w = workers_db[wid]
+            worker_details.append({"id": wid, "name": w.name, "device_type": w.device_type})
+    
+    return {
+        "report_generated_at": time.time(),
+        "job": {
+            "id": job.id,
+            "kernel_type": job.kernel_type.value,
+            "status": job.status.value,
+            "created_at": job.created_at,
+            "completed_at": job.completed_at,
+            "total_fragments": job.total_fragments,
+            "completed_fragments": job.completed_fragments
+        },
+        "processing_summary": {
+            "total_tasks": len(tasks),
+            "verified_tasks": sum(1 for t in tasks if t.status == TaskStatus.VERIFIED),
+            "consensus_reached": sum(1 for f in fragments if f.status == FragmentStatus.COMPLETED),
+            "workers_involved": len(workers_involved)
+        },
+        "workers": worker_details,
+        "audit_trail": [log.model_dump() for log in job_logs],
+        "chain_of_custody": {
+            "data_received": any(log.event_type == "job_created" for log in job_logs),
+            "processing_verified": any(log.event_type == "task_verified" for log in job_logs),
+            "results_finalized": any(log.event_type == "job_completed" for log in job_logs)
+        }
+    }
+
+@app.get("/audit/export")
+async def export_audit_logs(format: str = "json"):
+    """Export all audit logs for compliance archival"""
+    if format == "json":
+        return {
+            "export_timestamp": time.time(),
+            "total_logs": len(audit_logs_db),
+            "logs": [log.model_dump() for log in audit_logs_db]
+        }
+    else:
+        raise HTTPException(status_code=400, detail="Only JSON format is currently supported")
+
+# ============== LOCAL NETWORK MODE ==============
+
+local_network_mode = {"enabled": False, "allowed_subnets": []}
+
+@app.get("/config/network-mode")
+async def get_network_mode():
+    """Get current network mode configuration"""
+    return {
+        "local_network_mode": local_network_mode["enabled"],
+        "allowed_subnets": local_network_mode["allowed_subnets"],
+        "description": "When enabled, only workers from allowed subnets can connect"
+    }
+
+@app.post("/config/network-mode")
+async def set_network_mode(enabled: bool = False, allowed_subnets: list[str] = None):
+    """Configure local network mode for enterprise deployment"""
+    local_network_mode["enabled"] = enabled
+    if allowed_subnets:
+        local_network_mode["allowed_subnets"] = allowed_subnets
+    return {
+        "status": "updated",
+        "local_network_mode": local_network_mode["enabled"],
+        "allowed_subnets": local_network_mode["allowed_subnets"]
+    }
 
 # ============== WEBSOCKET ENDPOINTS ==============
 

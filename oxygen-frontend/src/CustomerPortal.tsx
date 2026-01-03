@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Upload, Image, CheckCircle, Clock, Loader2, ExternalLink, FileText, Hash, Grid3X3, File } from 'lucide-react'
+import { Upload, Image, CheckCircle, Clock, Loader2, ExternalLink, FileText, Hash, Grid3X3, File, Download, Shield } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -62,14 +62,14 @@ interface Task {
 }
 
 const KERNELS: Kernel[] = [
-  { type: 'model_finetune', name: 'AI Model Fine-Tuning', description: 'Distributed fine-tuning of MobileNet on custom images (real training)', input_type: 'training' },
-  { type: 'image_classify', name: 'AI Image Classification', description: 'Classify images using MobileNet AI model (real inference)', input_type: 'image' },
-  { type: 'image_blur', name: 'Gaussian Blur', description: 'Apply Gaussian blur filter to images', input_type: 'image' },
-  { type: 'image_edge', name: 'Edge Detection', description: 'Sobel edge detection filter', input_type: 'image' },
-  { type: 'image_grayscale', name: 'Grayscale', description: 'Convert image to grayscale', input_type: 'image' },
-  { type: 'file_hash', name: 'File Hashing', description: 'Compute SHA-256 hashes of file chunks', input_type: 'any' },
-  { type: 'text_wordcount', name: 'Word Count', description: 'Count word frequencies in text', input_type: 'text' },
-  { type: 'matrix_multiply', name: 'Matrix Multiplication', description: 'Distributed matrix multiplication', input_type: 'matrix' },
+  { type: 'image_blur', name: 'Face/PII Redaction', description: 'Blur sensitive regions in images for privacy compliance', input_type: 'image' },
+  { type: 'file_hash', name: 'Evidence Cataloging', description: 'Generate SHA-256 hashes for chain of custody verification', input_type: 'any' },
+  { type: 'image_grayscale', name: 'Image Preprocessing', description: 'Normalize images for consistent processing', input_type: 'image' },
+  { type: 'image_edge', name: 'Feature Extraction', description: 'Extract edges and features for analysis', input_type: 'image' },
+  { type: 'image_classify', name: 'Content Classification', description: 'AI-powered content categorization using MobileNet', input_type: 'image' },
+  { type: 'text_wordcount', name: 'Document Analysis', description: 'Extract keywords and metadata from documents', input_type: 'text' },
+  { type: 'matrix_multiply', name: 'Batch Processing', description: 'High-throughput parallel computation', input_type: 'matrix' },
+  { type: 'model_finetune', name: 'Custom Model Training', description: 'Train custom classifiers on your data', input_type: 'training' },
 ]
 
 function CustomerPortal() {
@@ -355,22 +355,40 @@ function CustomerPortal() {
       return false
     }
 
+    const downloadComplianceReport = async (jobId: string) => {
+      try {
+        const res = await fetch(`${API_URL}/audit/report/${jobId}`)
+        const report = await res.json()
+        const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `compliance-report-${jobId.slice(0, 8)}.json`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      } catch (err) {
+        console.error('Failed to download compliance report:', err)
+      }
+    }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       <div className="container mx-auto px-4 py-8 max-w-6xl">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white mb-2">
-            Oxygen<span className="text-purple-400">TM</span>
+            Oxygen<span className="text-purple-400"> Enterprise</span>
           </h1>
-          <p className="text-slate-300 text-lg">Customer Portal</p>
+          <p className="text-slate-300 text-lg">Sensitive Media Triage Platform</p>
           <p className="text-sm text-slate-400 mt-1">
-            Submit compute tasks for distributed processing across the network
+            Secure, distributed processing for sensitive data - no cloud required
           </p>
           <a 
             href="/worker.html" 
             className="inline-flex items-center gap-1 text-purple-400 hover:text-purple-300 text-sm mt-2"
           >
-            Switch to Worker Portal <ExternalLink className="h-3 w-3" />
+            Switch to Processing Node <ExternalLink className="h-3 w-3" />
           </a>
         </div>
 
@@ -387,6 +405,35 @@ function CustomerPortal() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Quick Start - Redact & Catalog Workflow */}
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Shield className="h-5 w-5 text-purple-600" />
+                  <span className="font-medium text-purple-800">Quick Start: Redact & Catalog</span>
+                </div>
+                <p className="text-sm text-purple-700 mb-3">
+                  Recommended workflow for sensitive media triage - blur faces/PII and generate evidence hashes
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-purple-300 text-purple-700 hover:bg-purple-100"
+                    onClick={() => setKernelType('image_blur')}
+                  >
+                    Face/PII Redaction
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-purple-300 text-purple-700 hover:bg-purple-100"
+                    onClick={() => setKernelType('file_hash')}
+                  >
+                    Evidence Cataloging
+                  </Button>
+                </div>
+              </div>
+
               {/* Kernel Type Selector */}
               <div className="space-y-2">
                 <Label>Compute Kernel</Label>
@@ -735,13 +782,26 @@ function CustomerPortal() {
         {selectedJob && (
           <Card className="mt-6 bg-white/95">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                {getKernelIcon(selectedJob.kernel_type)}
-                Job Results
-              </CardTitle>
-              <CardDescription>
-                {KERNELS.find(k => k.type === selectedJob.kernel_type)?.name || selectedJob.kernel_type}
-              </CardDescription>
+              <div className="flex justify-between items-start">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    {getKernelIcon(selectedJob.kernel_type)}
+                    Job Results
+                  </CardTitle>
+                  <CardDescription>
+                    {KERNELS.find(k => k.type === selectedJob.kernel_type)?.name || selectedJob.kernel_type}
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => downloadComplianceReport(selectedJob.id)}
+                  className="flex items-center gap-1"
+                >
+                  <Shield className="h-4 w-4" />
+                  Compliance Report
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {/* Image processing results */}

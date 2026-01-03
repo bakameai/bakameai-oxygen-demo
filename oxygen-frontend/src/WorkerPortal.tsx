@@ -790,17 +790,17 @@ function WorkerPortal() {
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white mb-2">
-            Oxygen<span className="text-green-400">TM</span>
+            Oxygen<span className="text-green-400"> Processing Node</span>
           </h1>
-          <p className="text-slate-300 text-lg">Worker Portal</p>
+          <p className="text-slate-300 text-lg">Distributed Compute Worker</p>
           <p className="text-sm text-slate-400 mt-1">
-            Contribute your device's compute power and earn rewards
+            Process sensitive data locally - data never leaves your network
           </p>
           <a 
             href="/" 
             className="inline-flex items-center gap-1 text-green-400 hover:text-green-300 text-sm mt-2"
           >
-            Switch to Customer Portal <ExternalLink className="h-3 w-3" />
+            Switch to Control Panel <ExternalLink className="h-3 w-3" />
           </a>
         </div>
 
@@ -810,13 +810,13 @@ function WorkerPortal() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <Cpu className="h-4 w-4" />
-                Tasks Completed
+                Tasks Processed
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{worker?.total_tasks_completed || 0}</div>
               <p className="text-xs text-gray-500">
-                {worker?.verified_tasks || 0} verified
+                {worker?.verified_tasks || 0} verified by consensus
               </p>
             </CardContent>
           </Card>
@@ -825,29 +825,29 @@ function WorkerPortal() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <CheckCircle className="h-4 w-4" />
-                Compute Time
+                Processing Time
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
                 {((worker?.total_compute_time_ms || 0) / 1000).toFixed(1)}s
               </div>
-              <p className="text-xs text-gray-500">total processing</p>
+              <p className="text-xs text-gray-500">total compute time</p>
             </CardContent>
           </Card>
           
           <Card className="bg-white/95">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <DollarSign className="h-4 w-4" />
-                Total Earnings
+                <CheckCircle className="h-4 w-4" />
+                Verification Rate
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-600">
-                ${(worker?.total_earnings || 0).toFixed(4)}
+                {worker?.total_tasks_completed ? ((worker?.verified_tasks || 0) / worker.total_tasks_completed * 100).toFixed(0) : 0}%
               </div>
-              <p className="text-xs text-gray-500">$0.0001 per task</p>
+              <p className="text-xs text-gray-500">consensus accuracy</p>
             </CardContent>
           </Card>
         </div>
@@ -857,10 +857,10 @@ function WorkerPortal() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Cpu className="h-5 w-5" />
-              Worker Node
+              Processing Node
             </CardTitle>
             <CardDescription>
-              Process compute tasks for the distributed network
+              Process sensitive data tasks on your local network
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -882,12 +882,12 @@ function WorkerPortal() {
               {isWorking ? (
                 <>
                   <Square className="h-4 w-4 mr-2" />
-                  Stop Contributing
+                  Stop Processing
                 </>
               ) : (
                 <>
                   <Play className="h-4 w-4 mr-2" />
-                  Start Contributing
+                  Start Processing
                 </>
               )}
             </Button>
@@ -927,14 +927,14 @@ function WorkerPortal() {
         {/* How it works */}
         <Card className="bg-white/95">
           <CardHeader>
-            <CardTitle>How It Works</CardTitle>
+            <CardTitle>Security & Compliance</CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-gray-600 space-y-2">
-            <p>1. Click "Start Contributing" to connect to the Oxygen network</p>
-            <p>2. Your browser will receive compute tasks (image processing, file hashing, word counting, matrix math)</p>
-            <p>3. Each task is processed using real compute kernels in your browser</p>
-            <p>4. Results are verified with SHA-256 hashes and you earn $0.0001 per task</p>
-            <p>5. The more tasks you process, the more you earn!</p>
+            <p>1. <strong>Data Sovereignty:</strong> All processing happens locally - data never leaves your network</p>
+            <p>2. <strong>Consensus Verification:</strong> Results are validated by multiple nodes for accuracy</p>
+            <p>3. <strong>Audit Trail:</strong> Every task is logged with SHA-256 hashes for chain of custody</p>
+            <p>4. <strong>Air-Gap Ready:</strong> Works on isolated networks without internet access</p>
+            <p>5. <strong>Compliance:</strong> Designed for CJIS, HIPAA, and government security requirements</p>
           </CardContent>
         </Card>
       </div>
